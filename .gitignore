@@ -1,0 +1,220 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+macos/Runner/GoogleService-Info.plist
+lib/firebase_options.dart
+ios/Runner/GoogleService-Info.plist
+# IntelliJ related
+
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# =============================================
+# 🔐 SENSITIVE FILES - API KEYS & CREDENTIALS
+# =============================================
+
+# Firebase configuration files (contain API keys)
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+lib/firebase_options.dart
+**/firebase_options.dart
+
+# Firebase Admin SDK / Service Account keys
+*-firebase-adminsdk-*.json
+*serviceAccount*.json
+*service-account*.json
+firebase-admin*.json
+firebase.json
+
+
+# Google Cloud / API credentials
+credentials.json
+client_secret*.json
+*.keystore
+*.jks
+key.properties
+android/key.properties
+
+# Environment files
+.env
+.env.*
+*.env
+.envrc
+
+# Local configuration
+local.properties
+android/local.properties
+
+# iOS sensitive files
+ios/Runner/GoogleService-Info.plist
+ios/firebase_app_id_file.json
+**/Pods/
+ios/Podfile.lock
+
+# macOS sensitive files  
+macos/Runner/GoogleService-Info.plist
+macos/firebase_app_id_file.json
+
+# Secrets and keys
+*.pem
+*.p12
+*.key
+*.cer
+secrets/
+.secrets/
+
+# =============================================
+# 🏗️ BUILD ARTIFACTS
+# =============================================
+
+# Android build
+android/.gradle/
+android/build/
+android/app/build/
+android/captures/
+android/.cxx/
+*.apk
+*.aab
+
+# iOS build
+ios/build/
+ios/.symlinks/
+ios/Pods/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+**/DerivedData/
+*.xcworkspace
+
+# macOS build
+macos/build/
+macos/.symlinks/
+macos/Pods/
+macos/Flutter/ephemeral/
+
+# Linux build
+linux/build/
+linux/flutter/ephemeral/
+
+# Windows build
+windows/build/
+windows/flutter/ephemeral/
+
+# Web build
+web/.dart_tool/
+
+# =============================================
+# 📦 GENERATED FILES
+# =============================================
+
+# Generated plugin registrants
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.metadata
+
+# Dart generated
+*.g.dart
+*.freezed.dart
+*.mocks.dart
+
+# =============================================
+# 🧪 TESTING & DEBUGGING
+# =============================================
+
+# Coverage
+coverage/
+*.lcov
+
+# Test results
+test-results/
+.test_coverage/
+
+# Debug
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# =============================================
+# 💻 IDE & EDITOR
+# =============================================
+
+# VS Code
+.vscode/launch.json
+.vscode/tasks.json
+
+# Android Studio / IntelliJ
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/libraries/
+.idea/modules.xml
+.idea/dictionaries/
+*.iml
+
+# Xcode
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+
+# =============================================
+# 📝 MISC
+# =============================================
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+tmp/
+temp/
+
+# Thumbnails
+._*
+Thumbs.db
+
+# Crashlytics
+crashlytics-build.properties
+fabric.properties
