@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +8,7 @@ import '../core/constants.dart';
 import '../models/photo_metadata.dart';
 import '../providers/event_provider.dart';
 import '../services/camera_service.dart';
+import 'photo_preview_screen.dart';
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
@@ -21,7 +23,10 @@ class _CameraScreenState extends State<CameraScreen>
   bool _isInitialized = false;
   bool _isCapturing = false;
   bool _showFlash = false;
-  String? _lastCapturedPath;
+
+  // List of recent captured photo paths (most recent first)
+  final List<String> _recentPhotos = [];
+  static const int _maxRecentPhotos = 10;
 
   @override
   void initState() {
@@ -89,13 +94,31 @@ class _CameraScreenState extends State<CameraScreen>
       final file = await _cameraService.capturePhoto();
 
       if (file != null && mounted) {
-        setState(() => _lastCapturedPath = file.path);
+        // Navigate to preview screen and wait for user's decision
+        final result = await Navigator.of(context).push<PhotoPreviewResult>(
+          MaterialPageRoute(
+            builder: (context) => PhotoPreviewScreen(imageFile: file),
+          ),
+        );
 
-        // Upload to event
-        final eventProvider = context.read<EventProvider>();
-        await eventProvider.capturePhoto(file, PhotoStorageType.shared);
-
-        _showSuccess('Photo captured!');
+        // Handle the result
+        if (result == PhotoPreviewResult.shareWithEvent && mounted) {
+          // Add to recent photos list
+          _addToRecentPhotos(file.path);
+          // Upload to event
+          final eventProvider = context.read<EventProvider>();
+          await eventProvider.capturePhoto(file, PhotoStorageType.shared);
+          _showSuccess('Photo shared with event!');
+        } else if (result == PhotoPreviewResult.saveLocally) {
+          // Add to recent photos list
+          _addToRecentPhotos(file.path);
+          // Already saved in preview screen, just show confirmation
+          _showSuccess('Photo saved to device!');
+        } else if (result == PhotoPreviewResult.discard) {
+          // Photo was discarded in preview screen
+          _showInfo('Photo discarded');
+        }
+        // If result is null, user tapped "Retake" - just continue with camera
       }
     } catch (e) {
       _showError('Failed to capture photo: $e');
@@ -109,7 +132,7 @@ class _CameraScreenState extends State<CameraScreen>
   Future<void> _toggleFlash() async {
     final newMode = await _cameraService.cycleFlashMode();
     setState(() {});
-    
+
     String message;
     switch (newMode) {
       case FlashMode.auto:
@@ -124,7 +147,8 @@ class _CameraScreenState extends State<CameraScreen>
       default:
         message = 'Flash: Auto';
     }
-    
+
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -140,12 +164,55 @@ class _CameraScreenState extends State<CameraScreen>
     setState(() {});
   }
 
+  /// Add a photo path to the recent photos list
+  void _addToRecentPhotos(String path) {
+    setState(() {
+      // Add to beginning of list (most recent first)
+      _recentPhotos.insert(0, path);
+      // Keep only the last N photos
+      if (_recentPhotos.length > _maxRecentPhotos) {
+        _recentPhotos.removeLast();
+      }
+    });
+  }
+
+  /// View recent photos in full screen with swipe navigation
+  void _viewRecentPhotos() {
+    if (_recentPhotos.isEmpty) return;
+
+    // Filter out any invalid paths first
+    final validPhotos = _recentPhotos
+        .where((path) => File(path).existsSync())
+        .toList();
+    if (validPhotos.isEmpty) {
+      setState(() => _recentPhotos.clear());
+      return;
+    }
+
+    // Update the list with only valid photos
+    if (validPhotos.length != _recentPhotos.length) {
+      setState(() {
+        _recentPhotos.clear();
+        _recentPhotos.addAll(validPhotos);
+      });
+    }
+
+    // Convert to File list and navigate to preview screen with swipe support
+    final files = validPhotos.map((path) => File(path)).toList();
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => PhotoPreviewScreen(
+          imageFiles: files,
+          initialIndex: 0,
+          isViewOnly: true,
+        ),
+      ),
+    );
+  }
+
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: AppColors.error,
-      ),
+      SnackBar(content: Text(message), backgroundColor: AppColors.error),
     );
   }
 
@@ -154,6 +221,16 @@ class _CameraScreenState extends State<CameraScreen>
       SnackBar(
         content: Text(message),
         backgroundColor: AppColors.success,
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
+  void _showInfo(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.grey[700],
         duration: const Duration(seconds: 1),
       ),
     );
@@ -175,10 +252,7 @@ class _CameraScreenState extends State<CameraScreen>
             ),
 
           // Flash overlay
-          if (_showFlash)
-            Container(
-              color: Colors.white.withOpacity(0.8),
-            ),
+          if (_showFlash) Container(color: Colors.white.withOpacity(0.8)),
 
           // Controls
           if (_isInitialized) ...[
@@ -303,10 +377,7 @@ class _CameraScreenState extends State<CameraScreen>
         height: 80,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          border: Border.all(
-            color: Colors.white,
-            width: 4,
-          ),
+          border: Border.all(color: Colors.white, width: 4),
         ),
         child: Center(
           child: AnimatedContainer(
@@ -324,7 +395,8 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   Widget _buildGalleryThumbnail() {
-    if (_lastCapturedPath == null) {
+    // If no recent photos, show placeholder
+    if (_recentPhotos.isEmpty) {
       return Container(
         width: 60,
         height: 60,
@@ -336,23 +408,57 @@ class _CameraScreenState extends State<CameraScreen>
       );
     }
 
-    return Container(
-      width: 60,
-      height: 60,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white, width: 2),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(6),
-        child: Image.asset(
-          _lastCapturedPath!,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => const Icon(
-            Icons.photo,
-            color: Colors.white54,
+    // Show most recent photo thumbnail (tap to view all with swipe)
+    final mostRecentFile = File(_recentPhotos.first);
+    return GestureDetector(
+      onTap: _viewRecentPhotos,
+      child: Stack(
+        children: [
+          Container(
+            width: 60,
+            height: 60,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.white, width: 2),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Image.file(
+                mostRecentFile,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  color: Colors.grey[800],
+                  child: const Icon(
+                    Icons.broken_image,
+                    color: Colors.white54,
+                    size: 24,
+                  ),
+                ),
+              ),
+            ),
           ),
-        ),
+          // Show count badge if more than 1 photo
+          if (_recentPhotos.length > 1)
+            Positioned(
+              top: -4,
+              right: -4,
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: const BoxDecoration(
+                  color: AppColors.primary,
+                  shape: BoxShape.circle,
+                ),
+                child: Text(
+                  '${_recentPhotos.length}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

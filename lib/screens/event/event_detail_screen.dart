@@ -30,16 +30,33 @@ class _EventDetailScreenState extends State<EventDetailScreen>
   late TabController _tabController;
   Set<String> _likedPhotoIds = {};
   bool _showLikedOnly = false;
+  String? _currentEventId; // Track current event to detect changes
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _currentEventId = widget.event.id;
 
-    // Set current event in provider
+    // Set current event in provider immediately
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<EventProvider>().setCurrentEvent(widget.event);
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant EventDetailScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // If event changed, clear state and update provider
+    if (oldWidget.event.id != widget.event.id) {
+      _currentEventId = widget.event.id;
+      setState(() {
+        _likedPhotoIds = {}; // Clear liked photos for privacy
+        _showLikedOnly = false;
+      });
+      // Update provider with new event
+      context.read<EventProvider>().setCurrentEvent(widget.event);
+    }
   }
 
   @override
@@ -169,43 +186,59 @@ class _EventDetailScreenState extends State<EventDetailScreen>
         final currentUser = authProvider.currentUser;
         String userName = 'User';
         if (currentUser != null) {
-          userName = currentUser.displayName ??
-              currentUser.email.split('@').first;
+          userName =
+              currentUser.displayName ?? currentUser.email.split('@').first;
         }
 
         return Scaffold(
           backgroundColor: const Color(0xFFF5F5F5),
-          body: SafeArea(
-            child: _MainContentView(
-              event: event,
-              isCreator: isCreator,
-              userName: userName,
-              onShowQR: _showQRCode,
-              onOpenCamera: _openCamera,
-              onPickImages: _pickImagesFromGallery,
-              onAddFolder: () => _showAddFolderDialog(context),
-              onShare: _shareEventNative,
-              likedPhotoIds: _likedPhotoIds,
-              showLikedOnly: _showLikedOnly,
-              onToggleLike: (photoId) {
-                setState(() {
-                  if (_likedPhotoIds.contains(photoId)) {
-                    _likedPhotoIds.remove(photoId);
-                  } else {
-                    _likedPhotoIds.add(photoId);
-                  }
-                });
-              },
-              onShowInfo: () => _showInfoBottomSheet(context, event, isCreator),
-            ),
+          extendBodyBehindAppBar: true,
+          extendBody: true,
+          body: Stack(
+            children: [
+              _MainContentView(
+                key: ValueKey('main_content_${event.id}'), // Force rebuild on event change
+                event: event,
+                isCreator: isCreator,
+                userName: userName,
+                onShowQR: _showQRCode,
+                onOpenCamera: _openCamera,
+                onPickImages: _pickImagesFromGallery,
+                onAddFolder: () => _showAddFolderDialog(context),
+                onShare: _shareEventNative,
+                likedPhotoIds: _likedPhotoIds,
+                showLikedOnly: _showLikedOnly,
+                onToggleLike: (photoId) {
+                  setState(() {
+                    if (_likedPhotoIds.contains(photoId)) {
+                      _likedPhotoIds.remove(photoId);
+                    } else {
+                      _likedPhotoIds.add(photoId);
+                    }
+                  });
+                },
+                onShowInfo: () =>
+                    _showInfoBottomSheet(context, event, isCreator),
+              ),
+              // Floating bottom bar
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: MediaQuery.of(context).padding.bottom + 9,
+                child: _buildNewBottomBar(isCreator, event),
+              ),
+            ],
           ),
-          bottomNavigationBar: _buildNewBottomBar(isCreator, event),
         );
       },
     );
   }
 
-  void _showInfoBottomSheet(BuildContext context, EventModel event, bool isCreator) {
+  void _showInfoBottomSheet(
+    BuildContext context,
+    EventModel event,
+    bool isCreator,
+  ) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -223,6 +256,7 @@ class _EventDetailScreenState extends State<EventDetailScreen>
             ),
           ),
           child: _InfoTab(
+            key: ValueKey('info_tab_${event.id}'),
             event: event,
             scrollController: scrollController,
           ),
@@ -249,62 +283,62 @@ link:https://drive.google.com/file/d/12n2JouMmZedPVsgcTF4lpwdmwZhl-2oM/view?usp=
   }
 
   Widget _buildNewBottomBar(bool isCreator, EventModel event) {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF8F0), // Light creamy color
-        borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(32),
-          topRight: Radius.circular(32),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 20,
-            offset: const Offset(0, -5),
-          ),
-        ],
-      ),
-      child: SafeArea(
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(32),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
         child: Container(
-          height: 80,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              // Upload button
-              _buildBottomNavItem(
-                icon: Icons.file_upload_outlined,
-                isActive: false,
-                onTap: _pickImagesFromGallery,
-              ),
-              // Liked photos button
-              _buildBottomNavItem(
-                icon: _showLikedOnly
-                    ? Icons.favorite_rounded
-                    : Icons.favorite_border_rounded,
-                isActive: _showLikedOnly,
-                activeColor: const Color(0xFFE8985A),
-                onTap: () {
-                  setState(() {
-                    _showLikedOnly = !_showLikedOnly;
-                  });
-                },
-              ),
-              // Info button (for members/requests)
-              _buildBottomNavItem(
-                icon: Icons.info_outline_rounded,
-                isActive: false,
-                onTap: () => _showInfoBottomSheet(context, event, isCreator),
-              ),
-              // Share button
-              _buildBottomNavItem(
-                icon: Icons.share_outlined,
-                isActive: false,
-                onTap: _shareEventNative,
-              ),
-              // Camera button on the right
-              _buildCameraNavItem(),
-            ],
+          height: 72,
+          decoration: BoxDecoration(
+            // Subtle dark tint like iOS Control Center
+            color: Colors.white.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(32),
+            // Glass-like border with gradient effect
+            border: Border.all(
+              color: Colors.white.withOpacity(0.4),
+              width: 1.5,
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                // Upload button
+                _buildBottomNavItem(
+                  icon: Icons.file_upload_outlined,
+                  isActive: false,
+                  onTap: _pickImagesFromGallery,
+                ),
+                // Liked photos button
+                _buildBottomNavItem(
+                  icon: _showLikedOnly
+                      ? Icons.favorite_rounded
+                      : Icons.favorite_border_rounded,
+                  isActive: _showLikedOnly,
+                  activeColor: const Color(0xFFE8985A),
+                  onTap: () {
+                    setState(() {
+                      _showLikedOnly = !_showLikedOnly;
+                    });
+                  },
+                ),
+                // Info button (for members/requests)
+                _buildBottomNavItem(
+                  icon: Icons.info_outline_rounded,
+                  isActive: false,
+                  onTap: () => _showInfoBottomSheet(context, event, isCreator),
+                ),
+                // Share button
+                _buildBottomNavItem(
+                  icon: Icons.share_outlined,
+                  isActive: false,
+                  onTap: _shareEventNative,
+                ),
+                // Camera button on the right
+                _buildCameraNavItem(),
+              ],
+            ),
           ),
         ),
       ),
@@ -389,16 +423,16 @@ link:https://drive.google.com/file/d/12n2JouMmZedPVsgcTF4lpwdmwZhl-2oM/view?usp=
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: isActive
-              ? (activeColor ?? const Color(0xFFE8985A)).withOpacity(0.15)
+              ? (activeColor ?? const Color(0xFFE8985A)).withOpacity(0.2)
               : Colors.transparent,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(14),
         ),
         child: Icon(
           icon,
-          size: 26,
+          size: 24,
           color: isActive
               ? (activeColor ?? const Color(0xFFE8985A))
-              : const Color(0xFF94A3B8),
+              : Colors.white.withOpacity(0.7),
         ),
       ),
     );
@@ -1151,6 +1185,7 @@ class _MainContentView extends StatefulWidget {
   final VoidCallback onShowInfo;
 
   const _MainContentView({
+    super.key,
     required this.event,
     required this.isCreator,
     required this.userName,
@@ -1172,17 +1207,42 @@ class _MainContentView extends StatefulWidget {
 class _MainContentViewState extends State<_MainContentView> {
   List<AppUser> _members = [];
   bool _isLoadingMembers = true;
+  final ScrollController _scrollController = ScrollController();
+  String? _currentEventId; // Track current event to detect changes
 
   @override
   void initState() {
     super.initState();
+    _currentEventId = widget.event.id;
     _loadMembers();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MainContentView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // If event changed, clear old data and reload
+    if (oldWidget.event.id != widget.event.id) {
+      _currentEventId = widget.event.id;
+      setState(() {
+        _members = []; // Clear old members immediately
+        _isLoadingMembers = true;
+      });
+      _loadMembers();
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadMembers() async {
     final eventProvider = context.read<EventProvider>();
+    // Always use widget.event.memberIds to get the correct members
+    // Don't rely on currentEvent as it may not be set yet
     final members = await eventProvider.getEventMembers(widget.event.memberIds);
-    if (mounted) {
+    if (mounted && _currentEventId == widget.event.id) {
       setState(() {
         _members = members.cast<AppUser>();
         _isLoadingMembers = false;
@@ -1195,12 +1255,68 @@ class _MainContentViewState extends State<_MainContentView> {
     await _loadMembers();
   }
 
+  // Get emoji based on event name
+  String _getEventEmoji(String eventName) {
+    final name = eventName.toLowerCase();
+    if (name.contains('diwali')) return '🪔';
+    if (name.contains('holi')) return '🎨';
+    if (name.contains('christmas')) return '🎄';
+    if (name.contains('new year')) return '🎆';
+    if (name.contains('birthday')) return '🎂';
+    if (name.contains('wedding')) return '💒';
+    if (name.contains('party')) return '🎉';
+    if (name.contains('trip') || name.contains('travel')) return '✈️';
+    if (name.contains('vacation')) return '🏖️';
+    if (name.contains('graduation')) return '🎓';
+    if (name.contains('anniversary')) return '💕';
+    if (name.contains('baby')) return '👶';
+    if (name.contains('eid')) return '🌙';
+    if (name.contains('easter')) return '🐰';
+    if (name.contains('halloween')) return '🎃';
+    if (name.contains('thanks')) return '🦃';
+    if (name.contains('picnic')) return '🧺';
+    if (name.contains('concert') || name.contains('music')) return '🎵';
+    if (name.contains('game') || name.contains('sport')) return '⚽';
+    if (name.contains('office') || name.contains('work')) return '💼';
+    if (name.contains('reunion')) return '👨‍👩‍👧‍👦';
+    return '📸'; // Default camera emoji for general events
+  }
+
+  // Get gradient colors based on event name
+  List<Color> _getEventGradient(String eventName) {
+    final name = eventName.toLowerCase();
+    if (name.contains('diwali')) {
+      return [const Color(0xFFFF6B35), const Color(0xFFFFB347)];
+    }
+    if (name.contains('holi')) {
+      return [const Color(0xFFFF6B6B), const Color(0xFF4ECDC4)];
+    }
+    if (name.contains('christmas')) {
+      return [const Color(0xFF165B33), const Color(0xFFBB2528)];
+    }
+    if (name.contains('new year')) {
+      return [const Color(0xFF667eea), const Color(0xFF764ba2)];
+    }
+    if (name.contains('birthday')) {
+      return [const Color(0xFFf093fb), const Color(0xFFf5576c)];
+    }
+    if (name.contains('wedding')) {
+      return [const Color(0xFFffecd2), const Color(0xFFfcb69f)];
+    }
+    if (name.contains('eid')) {
+      return [const Color(0xFF11998e), const Color(0xFF38ef7d)];
+    }
+    // Default warm gradient
+    return [const Color(0xFFE8985A), const Color(0xFFF4C896)];
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<EventProvider>(
       builder: (context, eventProvider, _) {
         var photos = eventProvider.currentPhotos;
         final isRefreshing = eventProvider.isRefreshing;
+        final isPhotosLoading = eventProvider.isPhotosLoading;
 
         // Filter by liked photos if showLikedOnly is true
         if (widget.showLikedOnly) {
@@ -1214,10 +1330,11 @@ class _MainContentViewState extends State<_MainContentView> {
           color: const Color(0xFFE8985A),
           backgroundColor: Colors.white,
           child: CustomScrollView(
+            controller: _scrollController,
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
-              // Search bar header
-              SliverToBoxAdapter(child: _buildSearchHeader()),
+              // Collapsible App Bar with festive header
+              _buildCollapsibleHeader(),
 
               // People Section
               SliverToBoxAdapter(child: _buildPeopleSection()),
@@ -1228,18 +1345,11 @@ class _MainContentViewState extends State<_MainContentView> {
               // Photos Section Header
               SliverToBoxAdapter(child: _buildPhotosHeader()),
 
-              // Photo Grid
-              if (isRefreshing)
-                const SliverToBoxAdapter(
-                  child: Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(32),
-                      child: CircularProgressIndicator(
-                        color: Color(0xFFE8985A),
-                        strokeWidth: 2.5,
-                      ),
-                    ),
-                  ),
+              // Photo Grid - Show skeleton while loading
+              if (isRefreshing || isPhotosLoading)
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  sliver: _buildPhotoSkeletonGrid(),
                 )
               else if (photos.isEmpty)
                 SliverToBoxAdapter(
@@ -1262,23 +1372,410 @@ class _MainContentViewState extends State<_MainContentView> {
     );
   }
 
+  // Skeleton loader for photos grid
+  Widget _buildPhotoSkeletonGrid() {
+    return SliverGrid(
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        mainAxisSpacing: 4,
+        crossAxisSpacing: 4,
+      ),
+      delegate: SliverChildBuilderDelegate(
+        (context, index) => _ShimmerBox(
+          width: double.infinity,
+          height: double.infinity,
+          borderRadius: 8,
+        ),
+        childCount: 12, // Show 12 skeleton items
+      ),
+    );
+  }
+
+  Widget _buildCollapsibleHeader() {
+    final gradient = _getEventGradient(widget.event.name);
+    final emoji = _getEventEmoji(widget.event.name);
+    final statusBarHeight = MediaQuery.of(context).padding.top;
+
+    return SliverAppBar(
+      expandedHeight: 240,
+      floating: false,
+      pinned: true,
+      elevation: 0,
+      backgroundColor: Colors.transparent,
+      automaticallyImplyLeading: false,
+      title: null,
+      flexibleSpace: LayoutBuilder(
+        builder: (context, constraints) {
+          // Calculate collapse ratio (0 = expanded, 1 = collapsed)
+          final expandedHeight = 240.0;
+          final collapsedHeight = kToolbarHeight + statusBarHeight;
+          final currentHeight = constraints.maxHeight;
+          final collapseRatio =
+              ((expandedHeight - currentHeight) /
+                      (expandedHeight - collapsedHeight))
+                  .clamp(0.0, 1.0);
+          final isCollapsed = collapseRatio > 0.7;
+
+          // Calculate corner radius based on collapse
+          final cornerRadius = isCollapsed ? 0.0 : 28.0 * (1 - collapseRatio);
+
+          return ClipRRect(
+            borderRadius: BorderRadius.only(
+              bottomLeft: Radius.circular(cornerRadius),
+              bottomRight: Radius.circular(cornerRadius),
+            ),
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: gradient,
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Pattern background (fades out when collapsed)
+                  if (!isCollapsed)
+                    Opacity(
+                      opacity: 1 - collapseRatio,
+                      child: _buildPatternBackground(widget.event.name),
+                    ),
+
+                  // Content
+                  SafeArea(
+                    bottom: false,
+                    child: Column(
+                      children: [
+                        // Top row with back button and QR
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          child: Row(
+                            children: [
+                              // Back button
+                              GestureDetector(
+                                onTap: () => Navigator.pop(context),
+                                child: Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: const Icon(
+                                    Icons.arrow_back_ios_new_rounded,
+                                    size: 18,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                              // Collapsed title (shows when collapsed)
+                              Expanded(
+                                child: AnimatedOpacity(
+                                  duration: const Duration(milliseconds: 200),
+                                  opacity: isCollapsed ? 1.0 : 0.0,
+                                  child: Text(
+                                    widget.event.name,
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                              // QR button
+                              GestureDetector(
+                                onTap: widget.onShowQR,
+                                child: Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: const Icon(
+                                    Icons.qr_code_rounded,
+                                    size: 20,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        // Expanded content (event name and tagline)
+                        // Only show when there's enough space (collapseRatio < 0.5)
+                        if (collapseRatio < 0.5)
+                          Flexible(
+                            child: AnimatedOpacity(
+                              duration: const Duration(milliseconds: 150),
+                              opacity: (1 - collapseRatio * 2).clamp(0.0, 1.0),
+                              child: SingleChildScrollView(
+                                physics: const NeverScrollableScrollPhysics(),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 20,
+                                  ),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        '$emoji ${widget.event.name}',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 24,
+                                          fontWeight: FontWeight.w800,
+                                          letterSpacing: -0.5,
+                                        ),
+                                        textAlign: TextAlign.center,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        'Share memories together',
+                                        style: TextStyle(
+                                          color: Colors.white.withOpacity(0.9),
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // Pattern background for different festivals
+  Widget _buildPatternBackground(String eventName) {
+    final name = eventName.toLowerCase();
+
+    if (name.contains('diwali')) {
+      return _buildDiwaliPattern();
+    } else if (name.contains('holi')) {
+      return _buildHoliPattern();
+    } else if (name.contains('christmas')) {
+      return _buildChristmasPattern();
+    } else if (name.contains('birthday')) {
+      return _buildBirthdayPattern();
+    }
+    // Default decorative pattern
+    return _buildDefaultPattern();
+  }
+
+  Widget _buildDiwaliPattern() {
+    return Stack(
+      children: [
+        // Decorative diyas and lights
+        Positioned(
+          top: 20,
+          right: 30,
+          child: _buildGlowingCircle(30, Colors.yellow.withOpacity(0.3)),
+        ),
+        Positioned(
+          top: 60,
+          right: 80,
+          child: _buildGlowingCircle(20, Colors.orange.withOpacity(0.3)),
+        ),
+        Positioned(
+          bottom: 40,
+          left: 20,
+          child: _buildGlowingCircle(25, Colors.yellow.withOpacity(0.25)),
+        ),
+        Positioned(
+          top: 30,
+          left: 40,
+          child: _buildGlowingCircle(15, Colors.amber.withOpacity(0.3)),
+        ),
+        Positioned(
+          bottom: 60,
+          right: 40,
+          child: _buildGlowingCircle(18, Colors.orange.withOpacity(0.25)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHoliPattern() {
+    return Stack(
+      children: [
+        Positioned(
+          top: 25,
+          right: 40,
+          child: _buildColorSplash(Colors.pink.withOpacity(0.3), 35),
+        ),
+        Positioned(
+          top: 50,
+          left: 30,
+          child: _buildColorSplash(Colors.purple.withOpacity(0.3), 28),
+        ),
+        Positioned(
+          bottom: 50,
+          right: 60,
+          child: _buildColorSplash(Colors.cyan.withOpacity(0.3), 32),
+        ),
+        Positioned(
+          bottom: 30,
+          left: 50,
+          child: _buildColorSplash(Colors.yellow.withOpacity(0.3), 25),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildChristmasPattern() {
+    return Stack(
+      children: [
+        Positioned(
+          top: 20,
+          right: 30,
+          child: Icon(
+            Icons.star,
+            size: 30,
+            color: Colors.yellow.withOpacity(0.5),
+          ),
+        ),
+        Positioned(
+          bottom: 40,
+          left: 25,
+          child: Icon(
+            Icons.ac_unit,
+            size: 25,
+            color: Colors.white.withOpacity(0.4),
+          ),
+        ),
+        Positioned(
+          top: 60,
+          left: 50,
+          child: Icon(
+            Icons.ac_unit,
+            size: 18,
+            color: Colors.white.withOpacity(0.3),
+          ),
+        ),
+        Positioned(
+          bottom: 60,
+          right: 50,
+          child: Icon(
+            Icons.ac_unit,
+            size: 22,
+            color: Colors.white.withOpacity(0.35),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBirthdayPattern() {
+    return Stack(
+      children: [
+        Positioned(
+          top: 25,
+          right: 35,
+          child: _buildGlowingCircle(28, Colors.pink.withOpacity(0.3)),
+        ),
+        Positioned(
+          top: 55,
+          left: 40,
+          child: _buildGlowingCircle(22, Colors.purple.withOpacity(0.25)),
+        ),
+        Positioned(
+          bottom: 45,
+          right: 55,
+          child: _buildGlowingCircle(25, Colors.blue.withOpacity(0.25)),
+        ),
+        Positioned(
+          bottom: 30,
+          left: 30,
+          child: _buildGlowingCircle(18, Colors.yellow.withOpacity(0.3)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDefaultPattern() {
+    return Stack(
+      children: [
+        Positioned(
+          top: 30,
+          right: 40,
+          child: _buildGlowingCircle(25, Colors.white.withOpacity(0.15)),
+        ),
+        Positioned(
+          bottom: 50,
+          left: 30,
+          child: _buildGlowingCircle(30, Colors.white.withOpacity(0.1)),
+        ),
+        Positioned(
+          top: 70,
+          left: 60,
+          child: _buildGlowingCircle(18, Colors.white.withOpacity(0.12)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGlowingCircle(double size, Color color) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: color,
+        boxShadow: [
+          BoxShadow(
+            color: color,
+            blurRadius: size * 0.8,
+            spreadRadius: size * 0.2,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildColorSplash(Color color, double size) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+    );
+  }
+
   Widget _buildSearchHeader() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Back button
           GestureDetector(
             onTap: () => Navigator.pop(context),
             child: Container(
-              padding: const EdgeInsets.all(10),
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(12),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.04),
+                    color: Colors.black.withOpacity(0.05),
                     blurRadius: 8,
                     offset: const Offset(0, 2),
                   ),
@@ -1291,31 +1788,19 @@ class _MainContentViewState extends State<_MainContentView> {
               ),
             ),
           ),
-          const SizedBox(width: 16),
-          // Hi Username and Event name
+          const SizedBox(width: 12),
+          // Event name centered
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '👋 Hi ${widget.userName}',
-                  style: TextStyle(
-                    color: Colors.grey.shade900,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  widget.event.name,
-                  style: TextStyle(
-                    color: Colors.grey.shade700,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+            child: Text(
+              widget.event.name,
+              style: const TextStyle(
+                color: Color(0xFF1E293B),
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.3,
+              ),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
             ),
           ),
           const SizedBox(width: 12),
@@ -1323,15 +1808,16 @@ class _MainContentViewState extends State<_MainContentView> {
           GestureDetector(
             onTap: widget.onShowQR,
             child: Container(
-              padding: const EdgeInsets.all(12),
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
                 color: const Color(0xFFE8985A),
-                shape: BoxShape.circle,
+                borderRadius: BorderRadius.circular(12),
                 boxShadow: [
                   BoxShadow(
                     color: const Color(0xFFE8985A).withOpacity(0.3),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
                   ),
                 ],
               ),
@@ -1365,24 +1851,56 @@ class _MainContentViewState extends State<_MainContentView> {
         SizedBox(
           height: 90,
           child: _isLoadingMembers
-              ? const Center(
-                  child: CircularProgressIndicator(
-                    color: Color(0xFFE8985A),
-                    strokeWidth: 2,
-                  ),
-                )
-              : ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  physics: const BouncingScrollPhysics(),
-                  itemCount: _members.length,
-                  itemBuilder: (context, index) {
-                    final member = _members[index];
-                    return _buildPersonAvatar(member);
-                  },
-                ),
+              ? _buildPeopleSkeletonLoader()
+              : _members.isEmpty
+                  ? Center(
+                      child: Text(
+                        'No members yet',
+                        style: TextStyle(
+                          color: Colors.grey.shade500,
+                          fontSize: 14,
+                        ),
+                      ),
+                    )
+                  : ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      physics: const BouncingScrollPhysics(),
+                      itemCount: _members.length,
+                      itemBuilder: (context, index) {
+                        final member = _members[index];
+                        return _buildPersonAvatar(member);
+                      },
+                    ),
         ),
       ],
+    );
+  }
+
+  Widget _buildPeopleSkeletonLoader() {
+    return ListView.builder(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: 5, // Show 5 skeleton avatars
+      itemBuilder: (context, index) => Padding(
+        padding: const EdgeInsets.only(right: 16),
+        child: Column(
+          children: [
+            _ShimmerBox(
+              width: 56,
+              height: 56,
+              borderRadius: 28,
+            ),
+            const SizedBox(height: 6),
+            _ShimmerBox(
+              width: 48,
+              height: 12,
+              borderRadius: 4,
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1768,18 +2286,31 @@ class _MainContentViewState extends State<_MainContentView> {
         final photo = photos[index];
         // Make first and fifth items taller (staggered look)
         final isLarge = index == 0 || index == 4;
-        return _buildPhotoCard(photo, isLarge: isLarge);
+        return _buildPhotoCard(
+          photo,
+          photos: photos,
+          index: index,
+          isLarge: isLarge,
+        );
       }, childCount: photos.length),
     );
   }
 
-  Widget _buildPhotoCard(PhotoMetadata photo, {bool isLarge = false}) {
+  Widget _buildPhotoCard(
+    PhotoMetadata photo, {
+    required List<PhotoMetadata> photos,
+    required int index,
+    bool isLarge = false,
+  }) {
     return GestureDetector(
       onTap: () {
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) =>
-                PhotoViewScreen(photo: photo, heroTag: 'photo_${photo.id}'),
+            builder: (_) => PhotoViewScreen(
+              photos: photos,
+              initialIndex: index,
+              heroTag: 'photo_${photo.id}',
+            ),
           ),
         );
       },
@@ -2425,7 +2956,8 @@ class _PhotosTab extends StatelessWidget {
                           Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => PhotoViewScreen(
-                                photo: photo,
+                                photos: photos,
+                                initialIndex: index,
                                 heroTag: 'photo_${photo.id}',
                               ),
                             ),
@@ -2451,7 +2983,7 @@ class _InfoTab extends StatefulWidget {
   final EventModel event;
   final ScrollController? scrollController;
 
-  const _InfoTab({required this.event, this.scrollController});
+  const _InfoTab({super.key, required this.event, this.scrollController});
 
   @override
   State<_InfoTab> createState() => _InfoTabState();
@@ -2461,28 +2993,38 @@ class _InfoTabState extends State<_InfoTab> {
   List<AppUser> _members = [];
   List<AppUser> _pendingMembers = [];
   bool _isLoading = true;
+  String? _currentEventId;
 
   @override
   void initState() {
     super.initState();
+    _currentEventId = widget.event.id;
     _loadMembers();
   }
 
   @override
   void didUpdateWidget(covariant _InfoTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Reload members when event changes
-    _loadMembers();
+    // Reload members when event changes - clear old data immediately
+    if (oldWidget.event.id != widget.event.id) {
+      _currentEventId = widget.event.id;
+      setState(() {
+        _members = [];
+        _pendingMembers = [];
+        _isLoading = true;
+      });
+      _loadMembers();
+    }
   }
 
   Future<void> _loadMembers() async {
     final eventProvider = context.read<EventProvider>();
-    final event = eventProvider.currentEvent ?? widget.event;
+    // Always use widget.event to get the correct members
+    // Don't rely on currentEvent as it may not be set yet
+    final members = await eventProvider.getEventMembers(widget.event.memberIds);
+    final pending = await eventProvider.getEventMembers(widget.event.pendingMemberIds);
 
-    final members = await eventProvider.getEventMembers(event.memberIds);
-    final pending = await eventProvider.getEventMembers(event.pendingMemberIds);
-
-    if (mounted) {
+    if (mounted && _currentEventId == widget.event.id) {
       setState(() {
         _members = members.cast<AppUser>();
         _pendingMembers = pending.cast<AppUser>();
@@ -2847,6 +3389,72 @@ class _ModernPhotoGridItemState extends State<_ModernPhotoGridItem> {
           ),
         ),
       ),
+    );
+  }
+}
+
+// Shimmer effect widget for skeleton loading
+class _ShimmerBox extends StatefulWidget {
+  final double width;
+  final double height;
+  final double borderRadius;
+
+  const _ShimmerBox({
+    required this.width,
+    required this.height,
+    this.borderRadius = 8,
+  });
+
+  @override
+  State<_ShimmerBox> createState() => _ShimmerBoxState();
+}
+
+class _ShimmerBoxState extends State<_ShimmerBox>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    )..repeat();
+    _animation = Tween<double>(begin: -1, end: 2).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOutSine),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        return Container(
+          width: widget.width,
+          height: widget.height,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(widget.borderRadius),
+            gradient: LinearGradient(
+              begin: Alignment(_animation.value - 1, 0),
+              end: Alignment(_animation.value, 0),
+              colors: [
+                Colors.grey.shade200,
+                Colors.grey.shade100,
+                Colors.grey.shade200,
+              ],
+              stops: const [0.0, 0.5, 1.0],
+            ),
+          ),
+        );
+      },
     );
   }
 }

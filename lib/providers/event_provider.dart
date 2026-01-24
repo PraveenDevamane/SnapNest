@@ -27,6 +27,7 @@ class EventProvider extends ChangeNotifier {
   List<PhotoMetadata> _pendingPhotos =
       []; // Local photos not yet in Firestore stream
   bool _isLoading = false;
+  bool _isPhotosLoading = false; // Track if photos are being loaded
   String? _error;
   bool _isRefreshing = false;
 
@@ -57,6 +58,7 @@ class EventProvider extends ChangeNotifier {
     ..._currentPhotos,
   ];
   bool get isLoading => _isLoading;
+  bool get isPhotosLoading => _isPhotosLoading;
   bool get isRefreshing => _isRefreshing;
   String? get error => _error;
   String? get _userId => _authProvider.userId;
@@ -148,8 +150,13 @@ class EventProvider extends ChangeNotifier {
   /// Subscribe to photos in current folder (null = all photos)
   void _subscribeToPhotos() {
     _photosSubscription?.cancel();
-    if (_currentEvent == null) return;
+    if (_currentEvent == null) {
+      _isPhotosLoading = false;
+      return;
+    }
 
+    _isPhotosLoading = true; // Set loading when starting subscription
+    
     // If folderId is null, subscribe to all photos in the event
     final Stream<List<PhotoMetadata>> photoStream;
     if (_currentFolderId == null) {
@@ -165,6 +172,8 @@ class EventProvider extends ChangeNotifier {
       (photos) {
         final hadNewPhotos = photos.length != _currentPhotos.length;
         _currentPhotos = photos;
+        _isPhotosLoading = false; // Photos loaded
+        
         // Remove photos from pending that are now in the stream
         _pendingPhotos.removeWhere(
           (p) => photos.any((photo) => photo.id == p.id),
@@ -179,6 +188,7 @@ class EventProvider extends ChangeNotifier {
       },
       onError: (e) {
         _error = e.toString();
+        _isPhotosLoading = false; // Stop loading on error
         _immediateNotify();
       },
     );
@@ -360,10 +370,14 @@ class EventProvider extends ChangeNotifier {
 
   /// Set current event and folder (null folderId = show all photos)
   void setCurrentEvent(EventModel event, {String? folderId}) {
+    // Clear old data IMMEDIATELY to prevent showing previous event's data
+    _currentPhotos = [];
+    _pendingPhotos = [];
+    _isPhotosLoading = true; // Set loading state
+    
     _currentEvent = event;
     // Start with "All" view (null) by default
     _currentFolderId = folderId;
-    _pendingPhotos = [];
 
     _subscribeToCurrentEvent(event.id);
     _subscribeToPhotos();

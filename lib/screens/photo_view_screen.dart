@@ -6,16 +6,34 @@ import 'package:gal/gal.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
 import '../core/constants.dart';
 import '../models/photo_metadata.dart';
 import '../providers/auth_provider.dart';
 import '../services/database_service.dart';
 
 class PhotoViewScreen extends StatefulWidget {
-  final PhotoMetadata photo;
+  /// Single photo (for backward compatibility)
+  final PhotoMetadata? photo;
+
+  /// List of photos for swipe navigation
+  final List<PhotoMetadata>? photos;
+
+  /// Initial index when viewing multiple photos
+  final int initialIndex;
+
   final String? heroTag;
 
-  const PhotoViewScreen({super.key, required this.photo, this.heroTag});
+  const PhotoViewScreen({
+    super.key,
+    this.photo,
+    this.photos,
+    this.initialIndex = 0,
+    this.heroTag,
+  }) : assert(
+         photo != null || photos != null,
+         'Either photo or photos must be provided',
+       );
 
   @override
   State<PhotoViewScreen> createState() => _PhotoViewScreenState();
@@ -29,9 +47,20 @@ class _PhotoViewScreenState extends State<PhotoViewScreen> {
   final TransformationController _transformationController =
       TransformationController();
 
+  late PageController _pageController;
+  late int _currentIndex;
+
+  /// Get the list of photos
+  List<PhotoMetadata> get _photos => widget.photos ?? [widget.photo!];
+
+  /// Get the current photo being displayed
+  PhotoMetadata get _currentPhoto => _photos[_currentIndex];
+
   @override
   void initState() {
     super.initState();
+    _currentIndex = widget.initialIndex.clamp(0, _photos.length - 1);
+    _pageController = PageController(initialPage: _currentIndex);
     SystemChrome.setSystemUIOverlayStyle(
       const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
@@ -42,6 +71,7 @@ class _PhotoViewScreenState extends State<PhotoViewScreen> {
 
   @override
   void dispose() {
+    _pageController.dispose();
     _transformationController.dispose();
     SystemChrome.setSystemUIOverlayStyle(
       const SystemUiOverlayStyle(
@@ -60,12 +90,12 @@ class _PhotoViewScreenState extends State<PhotoViewScreen> {
     try {
       String? filePath;
 
-      if (widget.photo.localPath != null &&
-          File(widget.photo.localPath!).existsSync()) {
-        filePath = widget.photo.localPath!;
-      } else if (widget.photo.downloadUrl != null) {
+      if (_currentPhoto.localPath != null &&
+          File(_currentPhoto.localPath!).existsSync()) {
+        filePath = _currentPhoto.localPath!;
+      } else if (_currentPhoto.downloadUrl != null) {
         _showMessage('Downloading photo...');
-        final response = await http.get(Uri.parse(widget.photo.downloadUrl!));
+        final response = await http.get(Uri.parse(_currentPhoto.downloadUrl!));
         if (response.statusCode == 200) {
           final tempDir = await getTemporaryDirectory();
           final file = File(
@@ -99,7 +129,7 @@ class _PhotoViewScreenState extends State<PhotoViewScreen> {
     final authProvider = context.read<AuthProvider>();
     final currentUserId = authProvider.userId;
 
-    if (currentUserId != widget.photo.ownerId) {
+    if (currentUserId != _currentPhoto.ownerId) {
       _showError('You can only delete your own photos');
       return;
     }
@@ -149,10 +179,10 @@ class _PhotoViewScreenState extends State<PhotoViewScreen> {
 
     try {
       final dbService = DatabaseService();
-      await dbService.deletePhoto(widget.photo.id);
+      await dbService.deletePhoto(_currentPhoto.id);
 
-      if (widget.photo.localPath != null) {
-        final file = File(widget.photo.localPath!);
+      if (_currentPhoto.localPath != null) {
+        final file = File(_currentPhoto.localPath!);
         if (await file.exists()) {
           await file.delete();
         }
@@ -223,11 +253,12 @@ class _PhotoViewScreenState extends State<PhotoViewScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            _buildTopBar(),
-            Expanded(child: _buildPhotoView()),
-            _buildBottomActionBar(),
+            // Photo view takes full space
+            _buildPhotoView(),
+            // Top bar overlay
+            Positioned(top: 0, left: 0, right: 0, child: _buildTopBar()),
           ],
         ),
       ),
@@ -235,9 +266,17 @@ class _PhotoViewScreenState extends State<PhotoViewScreen> {
   }
 
   Widget _buildTopBar() {
+    final bool hasMultiplePhotos = _photos.length > 1;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      color: Colors.black,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Colors.black.withValues(alpha: 0.7), Colors.transparent],
+        ),
+      ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -245,28 +284,303 @@ class _PhotoViewScreenState extends State<PhotoViewScreen> {
             icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
             onPressed: () => Navigator.of(context).pop(),
           ),
-          const Text(
-            'Photo',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
+          // Show page indicator for multiple photos
+          if (hasMultiplePhotos)
+            Text(
+              '${_currentIndex + 1} / ${_photos.length}',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+            )
+          else
+            const Text(
+              'Photo',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-          ),
-          const SizedBox(width: 48),
+          // 3-dot menu button
+          _buildMenuButton(),
         ],
       ),
     );
   }
 
+  Widget _buildMenuButton() {
+    final authProvider = context.read<AuthProvider>();
+    final isOwner = authProvider.userId == _currentPhoto.ownerId;
+
+    return PopupMenuButton<String>(
+      icon: const Icon(Icons.more_vert, color: Colors.white),
+      color: const Color(0xFF2A2A2A),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      onSelected: (value) {
+        switch (value) {
+          case 'save':
+            _downloadToGallery();
+            break;
+          case 'delete':
+            _deletePhoto();
+            break;
+          case 'info':
+            _showPhotoInfo();
+            break;
+        }
+      },
+      itemBuilder: (context) => [
+        // Save option
+        PopupMenuItem<String>(
+          value: 'save',
+          enabled: !_isDownloading && !_hasError,
+          child: Row(
+            children: [
+              Icon(
+                _isDownloading ? Icons.hourglass_top : Icons.download_rounded,
+                color: _isDownloading ? Colors.grey : const Color(0xFF14B8A6),
+                size: 20,
+              ),
+              const SizedBox(width: 12),
+              Text(
+                _isDownloading ? 'Saving...' : 'Save to Gallery',
+                style: TextStyle(
+                  color: _isDownloading ? Colors.grey : Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Delete option (only for owner)
+        if (isOwner)
+          PopupMenuItem<String>(
+            value: 'delete',
+            enabled: !_isDeleting && !_hasError,
+            child: Row(
+              children: [
+                Icon(
+                  _isDeleting
+                      ? Icons.hourglass_top
+                      : Icons.delete_outline_rounded,
+                  color: _isDeleting ? Colors.grey : AppColors.error,
+                  size: 20,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  _isDeleting ? 'Deleting...' : 'Delete',
+                  style: TextStyle(
+                    color: _isDeleting ? Colors.grey : AppColors.error,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        // Divider
+        const PopupMenuDivider(),
+        // Info option
+        const PopupMenuItem<String>(
+          value: 'info',
+          child: Row(
+            children: [
+              Icon(Icons.info_outline_rounded, color: Colors.white70, size: 20),
+              SizedBox(width: 12),
+              Text('Photo Info', style: TextStyle(color: Colors.white)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showPhotoInfo() {
+    final photo = _currentPhoto;
+    final uploadDate = photo.uploadTime;
+    final formattedDate = uploadDate != null
+        ? DateFormat('MMM d, yyyy • h:mm a').format(uploadDate)
+        : 'Unknown';
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(24),
+        decoration: const BoxDecoration(
+          color: Color(0xFF1E1E1E),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Handle bar
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[600],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // Title
+            const Text(
+              'Photo Information',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Uploaded by - fetch owner name from database
+            FutureBuilder<String>(
+              future: _getOwnerName(photo.ownerId),
+              builder: (context, snapshot) {
+                return _buildInfoRow(
+                  icon: Icons.person_outline_rounded,
+                  label: 'Uploaded by',
+                  value: snapshot.data ?? 'Loading...',
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // Upload date
+            _buildInfoRow(
+              icon: Icons.calendar_today_outlined,
+              label: 'Uploaded on',
+              value: formattedDate,
+            ),
+            const SizedBox(height: 16),
+
+            // Storage type
+            _buildInfoRow(
+              icon: Icons.cloud_outlined,
+              label: 'Storage',
+              value: photo.storageType == PhotoStorageType.shared
+                  ? 'Shared with Event'
+                  : 'Local Only',
+            ),
+
+            const SizedBox(height: 24),
+
+            // Close button
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: () => Navigator.pop(context),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  backgroundColor: Colors.white.withValues(alpha: 0.1),
+                ),
+                child: const Text(
+                  'Close',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ),
+            SizedBox(height: MediaQuery.of(context).padding.bottom),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<String> _getOwnerName(String ownerId) async {
+    if (ownerId.isEmpty) return 'Unknown';
+
+    try {
+      final dbService = DatabaseService();
+      final user = await dbService.getUser(ownerId);
+      return user?.displayName ?? user?.email ?? 'Unknown User';
+    } catch (e) {
+      return 'Unknown User';
+    }
+  }
+
+  Widget _buildInfoRow({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, color: const Color(0xFF14B8A6), size: 20),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(color: Colors.grey[500], fontSize: 12),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildPhotoView() {
+    final bool hasMultiplePhotos = _photos.length > 1;
+
+    if (hasMultiplePhotos) {
+      return PageView.builder(
+        controller: _pageController,
+        itemCount: _photos.length,
+        onPageChanged: (index) {
+          setState(() {
+            _currentIndex = index;
+            _isLoading = true;
+            _hasError = false;
+          });
+        },
+        itemBuilder: (context, index) {
+          return _buildSinglePhotoView(_photos[index]);
+        },
+      );
+    }
+
+    return _buildSinglePhotoView(_currentPhoto);
+  }
+
+  Widget _buildSinglePhotoView(PhotoMetadata photo) {
     ImageProvider? imageProvider;
 
-    if (widget.photo.localPath != null &&
-        File(widget.photo.localPath!).existsSync()) {
-      imageProvider = FileImage(File(widget.photo.localPath!));
-    } else if (widget.photo.displayUrl != null) {
-      imageProvider = CachedNetworkImageProvider(widget.photo.displayUrl!);
+    if (photo.localPath != null && File(photo.localPath!).existsSync()) {
+      imageProvider = FileImage(File(photo.localPath!));
+    } else if (photo.displayUrl != null) {
+      imageProvider = CachedNetworkImageProvider(photo.displayUrl!);
     }
 
     if (imageProvider == null) {
@@ -377,83 +691,6 @@ class _PhotoViewScreenState extends State<PhotoViewScreen> {
       minScale: 0.5,
       maxScale: 4.0,
       child: Center(child: imageWidget),
-    );
-  }
-
-  Widget _buildBottomActionBar() {
-    final authProvider = context.read<AuthProvider>();
-    final isOwner = authProvider.userId == widget.photo.ownerId;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      decoration: const BoxDecoration(
-        color: Color(0xFF1E1E1E),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _buildActionButton(
-            icon: _isDownloading
-                ? Icons.hourglass_top_rounded
-                : Icons.download_rounded,
-            label: _isDownloading ? 'Saving...' : 'Save',
-            onPressed: _isDownloading || _hasError ? null : _downloadToGallery,
-            color: const Color(0xFF14B8A6),
-          ),
-          if (isOwner)
-            _buildActionButton(
-              icon: _isDeleting
-                  ? Icons.hourglass_top_rounded
-                  : Icons.delete_outline_rounded,
-              label: _isDeleting ? 'Deleting...' : 'Delete',
-              onPressed: _isDeleting || _hasError ? null : _deletePhoto,
-              color: AppColors.error,
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActionButton({
-    required IconData icon,
-    required String label,
-    required Color color,
-    VoidCallback? onPressed,
-  }) {
-    final isDisabled = onPressed == null;
-
-    return GestureDetector(
-      onTap: onPressed,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-        decoration: BoxDecoration(
-          color: isDisabled
-              ? Colors.grey.withOpacity(0.3)
-              : color.withOpacity(0.15),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isDisabled
-                ? Colors.grey.withOpacity(0.3)
-                : color.withOpacity(0.3),
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: isDisabled ? Colors.grey : color, size: 22),
-            const SizedBox(width: 10),
-            Text(
-              label,
-              style: TextStyle(
-                color: isDisabled ? Colors.grey : color,
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

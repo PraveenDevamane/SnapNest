@@ -58,6 +58,8 @@ ios/Runner/GoogleService-Info.plist
 lib/firebase_options.dart
 **/firebase_options.dart
 
+.metadata
+
 # Firebase Admin SDK / Service Account keys
 *-firebase-adminsdk-*.json
 *serviceAccount*.json
