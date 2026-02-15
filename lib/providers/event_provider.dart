@@ -156,7 +156,7 @@ class EventProvider extends ChangeNotifier {
     }
 
     _isPhotosLoading = true; // Set loading when starting subscription
-    
+
     // If folderId is null, subscribe to all photos in the event
     final Stream<List<PhotoMetadata>> photoStream;
     if (_currentFolderId == null) {
@@ -173,7 +173,7 @@ class EventProvider extends ChangeNotifier {
         final hadNewPhotos = photos.length != _currentPhotos.length;
         _currentPhotos = photos;
         _isPhotosLoading = false; // Photos loaded
-        
+
         // Remove photos from pending that are now in the stream
         _pendingPhotos.removeWhere(
           (p) => photos.any((photo) => photo.id == p.id),
@@ -205,9 +205,7 @@ class EventProvider extends ChangeNotifier {
       _subscribeToEvents();
       if (_currentEvent != null) {
         _subscribeToCurrentEvent(_currentEvent!.id);
-        if (_currentFolderId != null) {
-          _subscribeToPhotos();
-        }
+        _subscribeToPhotos();
       }
 
       // Small delay to let subscriptions fire
@@ -374,7 +372,7 @@ class EventProvider extends ChangeNotifier {
     _currentPhotos = [];
     _pendingPhotos = [];
     _isPhotosLoading = true; // Set loading state
-    
+
     _currentEvent = event;
     // Start with "All" view (null) by default
     _currentFolderId = folderId;

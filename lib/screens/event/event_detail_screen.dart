@@ -197,7 +197,9 @@ class _EventDetailScreenState extends State<EventDetailScreen>
           body: Stack(
             children: [
               _MainContentView(
-                key: ValueKey('main_content_${event.id}'), // Force rebuild on event change
+                key: ValueKey(
+                  'main_content_${event.id}',
+                ), // Force rebuild on event change
                 event: event,
                 isCreator: isCreator,
                 userName: userName,
@@ -224,7 +226,9 @@ class _EventDetailScreenState extends State<EventDetailScreen>
               Positioned(
                 left: 16,
                 right: 16,
-                bottom: MediaQuery.of(context).padding.bottom + 9,
+                bottom: MediaQuery.of(context).padding.bottom > 0
+                    ? MediaQuery.of(context).padding.bottom + 9
+                    : 12,
                 child: _buildNewBottomBar(isCreator, event),
               ),
             ],
@@ -290,14 +294,18 @@ link:https://drive.google.com/file/d/12n2JouMmZedPVsgcTF4lpwdmwZhl-2oM/view?usp=
         child: Container(
           height: 72,
           decoration: BoxDecoration(
-            // Subtle dark tint like iOS Control Center
-            color: Colors.white.withOpacity(0.15),
+            // Dark tint for visibility on light backgrounds
+            color: Colors.black.withOpacity(0.55),
             borderRadius: BorderRadius.circular(32),
-            // Glass-like border with gradient effect
-            border: Border.all(
-              color: Colors.white.withOpacity(0.4),
-              width: 1.5,
-            ),
+            // Subtle border for glass feel
+            border: Border.all(color: Colors.white.withOpacity(0.15), width: 1),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 20,
+                offset: const Offset(0, 4),
+              ),
+            ],
           ),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1853,25 +1861,22 @@ class _MainContentViewState extends State<_MainContentView> {
           child: _isLoadingMembers
               ? _buildPeopleSkeletonLoader()
               : _members.isEmpty
-                  ? Center(
-                      child: Text(
-                        'No members yet',
-                        style: TextStyle(
-                          color: Colors.grey.shade500,
-                          fontSize: 14,
-                        ),
-                      ),
-                    )
-                  : ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      physics: const BouncingScrollPhysics(),
-                      itemCount: _members.length,
-                      itemBuilder: (context, index) {
-                        final member = _members[index];
-                        return _buildPersonAvatar(member);
-                      },
-                    ),
+              ? Center(
+                  child: Text(
+                    'No members yet',
+                    style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
+                  ),
+                )
+              : ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  physics: const BouncingScrollPhysics(),
+                  itemCount: _members.length,
+                  itemBuilder: (context, index) {
+                    final member = _members[index];
+                    return _buildPersonAvatar(member);
+                  },
+                ),
         ),
       ],
     );
@@ -1887,17 +1892,9 @@ class _MainContentViewState extends State<_MainContentView> {
         padding: const EdgeInsets.only(right: 16),
         child: Column(
           children: [
-            _ShimmerBox(
-              width: 56,
-              height: 56,
-              borderRadius: 28,
-            ),
+            _ShimmerBox(width: 56, height: 56, borderRadius: 28),
             const SizedBox(height: 6),
-            _ShimmerBox(
-              width: 48,
-              height: 12,
-              borderRadius: 4,
-            ),
+            _ShimmerBox(width: 48, height: 12, borderRadius: 4),
           ],
         ),
       ),
@@ -3022,7 +3019,9 @@ class _InfoTabState extends State<_InfoTab> {
     // Always use widget.event to get the correct members
     // Don't rely on currentEvent as it may not be set yet
     final members = await eventProvider.getEventMembers(widget.event.memberIds);
-    final pending = await eventProvider.getEventMembers(widget.event.pendingMemberIds);
+    final pending = await eventProvider.getEventMembers(
+      widget.event.pendingMemberIds,
+    );
 
     if (mounted && _currentEventId == widget.event.id) {
       setState(() {
