@@ -232,6 +232,32 @@ class DatabaseService {
     await _photosRef.doc(photoId).delete();
   }
 
+  /// Get set of Drive file IDs already tracked in Firestore for an event
+  Future<Set<String>> getTrackedDriveFileIds(String eventId) async {
+    final query = await _photosRef
+        .where('eventId', isEqualTo: eventId)
+        .where('driveFileId', isNull: false)
+        .get();
+    
+    return query.docs
+        .map((doc) => doc.data()['driveFileId'] as String?)
+        .where((id) => id != null && id.isNotEmpty)
+        .cast<String>()
+        .toSet();
+  }
+
+  /// Batch-create multiple photo metadata docs
+  Future<void> createPhotoBatch(List<PhotoMetadata> photos) async {
+    if (photos.isEmpty) return;
+    
+    final batch = _firestore.batch();
+    for (final photo in photos) {
+      final docRef = _photosRef.doc();
+      batch.set(docRef, photo.toMap());
+    }
+    await batch.commit();
+  }
+
   /// Get pending uploads for user
   Future<List<PhotoMetadata>> getPendingUploads(String userId) async {
     final query = await _photosRef

@@ -30,6 +30,9 @@ class EventProvider extends ChangeNotifier {
   bool _isPhotosLoading = false; // Track if photos are being loaded
   String? _error;
   bool _isRefreshing = false;
+  bool _isSyncing = false;
+  final Map<String, DateTime> _lastSyncTime = {}; // driveFolderId -> last sync time
+  static const Duration _syncCooldown = Duration(seconds: 30);
 
   // Subscriptions
   StreamSubscription<List<EventModel>>? _eventsSubscription;
@@ -61,6 +64,7 @@ class EventProvider extends ChangeNotifier {
   bool get isPhotosLoading => _isPhotosLoading;
   bool get isRefreshing => _isRefreshing;
   String? get error => _error;
+  bool get isSyncing => _isSyncing;
   String? get _userId => _authProvider.userId;
 
   /// Debounced notify to prevent excessive rebuilds
@@ -206,6 +210,8 @@ class EventProvider extends ChangeNotifier {
       if (_currentEvent != null) {
         _subscribeToCurrentEvent(_currentEvent!.id);
         _subscribeToPhotos();
+        // Sync Drive photos on refresh (force = true to bypass cooldown)
+        _triggerDriveSync(force: true);
       }
 
       // Small delay to let subscriptions fire
@@ -380,6 +386,9 @@ class EventProvider extends ChangeNotifier {
     _subscribeToCurrentEvent(event.id);
     _subscribeToPhotos();
     notifyListeners();
+
+    // Sync Drive photos in background
+    _triggerDriveSync();
   }
 
   /// Change current folder (null = show all photos)
@@ -388,6 +397,9 @@ class EventProvider extends ChangeNotifier {
     _pendingPhotos = [];
     _subscribeToPhotos();
     notifyListeners();
+
+    // Sync Drive photos for the new folder
+    _triggerDriveSync();
   }
 
   /// Clear current event
@@ -468,6 +480,111 @@ class EventProvider extends ChangeNotifier {
     } catch (e) {
       // Error is handled by upload service
       debugPrint('Upload failed: $e');
+    }
+  }
+
+  // ==================== DRIVE SYNC ====================
+
+  /// Trigger Drive sync for current event/folder(s)
+  void _triggerDriveSync({bool force = false}) {
+    if (_currentEvent == null) return;
+
+    if (_currentFolderId != null) {
+      // Sync specific folder
+      final folder = _currentEvent!.folders.firstWhere(
+        (f) => f.id == _currentFolderId,
+        orElse: () => _currentEvent!.folders.first,
+      );
+      _syncDrivePhotos(
+        _currentEvent!.id,
+        folder.id,
+        folder.driveFolderId,
+        force: force,
+      );
+    } else {
+      // "All" view — sync every folder
+      for (final folder in _currentEvent!.folders) {
+        _syncDrivePhotos(
+          _currentEvent!.id,
+          folder.id,
+          folder.driveFolderId,
+          force: force,
+        );
+      }
+    }
+  }
+
+  /// Sync images from a Drive folder into Firestore
+  Future<void> _syncDrivePhotos(
+    String eventId,
+    String folderId,
+    String driveFolderId, {
+    bool force = false,
+  }) async {
+    // Cooldown check
+    if (!force) {
+      final lastSync = _lastSyncTime[driveFolderId];
+      if (lastSync != null &&
+          DateTime.now().difference(lastSync) < _syncCooldown) {
+        return;
+      }
+    }
+
+    if (_isSyncing) return;
+    _isSyncing = true;
+    _debouncedNotify();
+
+    try {
+      // 1. List image files from Drive folder
+      final driveFiles = await _driveService.listImageFiles(driveFolderId);
+      if (driveFiles.isEmpty) return;
+
+      // 2. Get already-tracked Drive file IDs from Firestore
+      final trackedIds = await _dbService.getTrackedDriveFileIds(eventId);
+
+      // 3. Find untracked files
+      final untrackedFiles = driveFiles
+          .where((f) => !trackedIds.contains(f['id'] as String))
+          .toList();
+
+      if (untrackedFiles.isEmpty) return;
+
+      debugPrint(
+        '🔄 Drive sync: found ${untrackedFiles.length} new images in folder $folderId',
+      );
+
+      // 4. Create PhotoMetadata for each untracked file
+      final newPhotos = untrackedFiles.map((file) {
+        final createdTime = file['createdTime'] != null
+            ? DateTime.tryParse(file['createdTime'] as String)
+            : null;
+
+        return PhotoMetadata(
+          id: '', // Will be assigned by Firestore
+          eventId: eventId,
+          folderId: folderId,
+          ownerId: 'drive_upload', // Mark as externally uploaded
+          driveFileId: file['id'] as String,
+          uploadStatus: PhotoUploadStatus.completed,
+          storageType: PhotoStorageType.shared,
+          uploadTime: createdTime ?? DateTime.now(),
+        );
+      }).toList();
+
+      // 5. Batch-insert into Firestore
+      await _dbService.createPhotoBatch(newPhotos);
+
+      _lastSyncTime[driveFolderId] = DateTime.now();
+
+      debugPrint(
+        '✅ Drive sync: inserted ${newPhotos.length} photos into Firestore',
+      );
+    } catch (e) {
+      debugPrint('⚠️ Drive sync failed: $e');
+      // Don't set _error — sync failures are non-critical
+    } finally {
+      _isSyncing = false;
+      _debouncedNotify();
     }
   }
 

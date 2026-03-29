@@ -211,7 +211,7 @@ class GoogleDriveService {
     
     final response = await http.get(
       Uri.parse(
-        "$_driveApiBase/files?q='$folderId'+in+parents&fields=files(id,name,mimeType,webViewLink,thumbnailLink,size,createdTime)",
+        "$_driveApiBase/files?q='$folderId'+in+parents+and+trashed=false&fields=files(id,name,mimeType,webViewLink,thumbnailLink,size,createdTime)",
       ),
       headers: headers,
     );
@@ -222,6 +222,45 @@ class GoogleDriveService {
 
     final data = jsonDecode(response.body);
     return List<Map<String, dynamic>>.from(data['files'] ?? []);
+  }
+
+  /// List only image files in a folder (for sync)
+  Future<List<Map<String, dynamic>>> listImageFiles(String folderId) async {
+    final headers = await _getHeaders();
+    
+    final query = "'$folderId' in parents and trashed=false and ("
+        "mimeType='image/jpeg' or mimeType='image/png' or "
+        "mimeType='image/gif' or mimeType='image/webp' or "
+        "mimeType='image/heic' or mimeType='image/heif')";
+    
+    final allFiles = <Map<String, dynamic>>[];
+    String? pageToken;
+    
+    do {
+      final url = StringBuffer(
+        '$_driveApiBase/files?q=${Uri.encodeQueryComponent(query)}'
+        '&fields=nextPageToken,files(id,name,mimeType,createdTime)'
+        '&pageSize=100',
+      );
+      if (pageToken != null) {
+        url.write('&pageToken=$pageToken');
+      }
+      
+      final response = await http.get(
+        Uri.parse(url.toString()),
+        headers: headers,
+      );
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to list image files: ${response.body}');
+      }
+
+      final data = jsonDecode(response.body);
+      allFiles.addAll(List<Map<String, dynamic>>.from(data['files'] ?? []));
+      pageToken = data['nextPageToken'];
+    } while (pageToken != null);
+    
+    return allFiles;
   }
 
   /// Get MIME type from file extension

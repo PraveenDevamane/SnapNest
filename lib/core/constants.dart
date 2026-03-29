@@ -111,6 +111,7 @@ class AppConfig {
 class DriveConfig {
   static const List<String> scopes = [
     'https://www.googleapis.com/auth/drive.file',
+    'https://www.googleapis.com/auth/drive.readonly',
   ];
   
   static String getViewUrl(String fileId) =>
