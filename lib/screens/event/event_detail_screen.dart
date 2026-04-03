@@ -13,6 +13,8 @@ import '../../providers/event_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../widgets/custom_widgets.dart';
 import '../../widgets/event_widgets.dart';
+import '../../services/face_cluster_service.dart';
+import 'package:http/http.dart' as http;
 import '../camera_screen.dart';
 import '../photo_view_screen.dart';
 
@@ -1217,12 +1219,58 @@ class _MainContentViewState extends State<_MainContentView> {
   bool _isLoadingMembers = true;
   final ScrollController _scrollController = ScrollController();
   String? _currentEventId; // Track current event to detect changes
+  final _clusterService = FaceClusterService();
+  int? _selectedPersonId;
+  bool _isClustering = false;
+
+  Set<String> _processedPhotoUrls = {};
+  bool _isClusterServiceInitialized = false;
 
   @override
   void initState() {
     super.initState();
     _currentEventId = widget.event.id;
     _loadMembers();
+    _clusterService.init().then((_) {
+      _isClusterServiceInitialized = true;
+      _processAllPhotos(context.read<EventProvider>().currentPhotos);
+    });
+  }
+
+  Future<Uint8List> _downloadPhoto(String url) async {
+    final response = await http.get(Uri.parse(url));
+    return response.bodyBytes;
+  }
+
+  Future<void> _processAllPhotos(List<PhotoMetadata> photos) async {
+    if (!_isClusterServiceInitialized) return;
+    if (_isClustering) return;
+    _isClustering = true;
+    bool clusterUpdated = false;
+    
+    for (final photo in photos) {
+      if (photo.displayUrl == null && photo.thumbnailUrl == null) continue;
+      final url = photo.thumbnailUrl ?? photo.displayUrl!;
+      if (_processedPhotoUrls.contains(url)) continue;
+      
+      try {
+        final bytes = await _downloadPhoto(url);
+        await _clusterService.processPhoto(url, bytes);
+        _processedPhotoUrls.add(url);
+        clusterUpdated = true;
+      } catch (e) {
+        debugPrint('Error processing photo ${photo.id}: $e');
+      }
+    }
+    
+    _isClustering = false;
+    if (clusterUpdated && mounted) setState(() {});
+  }
+
+  void _filterByPerson(int clusterId) {
+    setState(() {
+      _selectedPersonId = _selectedPersonId == clusterId ? null : clusterId;
+    });
   }
 
   @override
@@ -1326,11 +1374,27 @@ class _MainContentViewState extends State<_MainContentView> {
         final isRefreshing = eventProvider.isRefreshing;
         final isPhotosLoading = eventProvider.isPhotosLoading;
 
+        // Process any new photos for clustering if not already done
+        if (!isPhotosLoading && photos.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _processAllPhotos(photos);
+          });
+        }
+
         // Filter by liked photos if showLikedOnly is true
         if (widget.showLikedOnly) {
           photos = photos
               .where((p) => widget.likedPhotoIds.contains(p.id))
               .toList();
+        }
+
+        // Filter by face cluster if selected
+        if (_selectedPersonId != null && _clusterService.clusters.containsKey(_selectedPersonId)) {
+          final clusterPhotoUrls = _clusterService.clusters[_selectedPersonId]!;
+          photos = photos.where((photo) {
+            final url = photo.thumbnailUrl ?? photo.displayUrl;
+            return url != null && clusterPhotoUrls.contains(url);
+          }).toList();
         }
 
         return RefreshIndicator(
@@ -1344,8 +1408,12 @@ class _MainContentViewState extends State<_MainContentView> {
               // Collapsible App Bar with festive header
               _buildCollapsibleHeader(),
 
-              // People Section
-              SliverToBoxAdapter(child: _buildPeopleSection()),
+              // Members Section
+              SliverToBoxAdapter(child: _buildMembersSection()),
+
+              // Face Clusters Section
+              if (_clusterService.clusters.isNotEmpty)
+                SliverToBoxAdapter(child: _buildFaceClustersSection()),
 
               // Folders Section
               SliverToBoxAdapter(child: _buildFoldersSection(eventProvider)),
@@ -1841,14 +1909,14 @@ class _MainContentViewState extends State<_MainContentView> {
     );
   }
 
-  Widget _buildPeopleSection() {
+  Widget _buildMembersSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
           child: Text(
-            'People',
+            'Members',
             style: TextStyle(
               color: Colors.grey.shade900,
               fontSize: 20,
@@ -1995,37 +2063,6 @@ class _MainContentViewState extends State<_MainContentView> {
     );
   }
 
-  Widget _buildMorePeopleButton(int count) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 16),
-      child: Column(
-        children: [
-          Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              shape: BoxShape.circle,
-            ),
-            child: Center(
-              child: Text(
-                '+$count More',
-                style: TextStyle(
-                  color: Colors.grey.shade600,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ),
-          ),
-          const SizedBox(height: 6),
-          const SizedBox(width: 60, height: 14),
-        ],
-      ),
-    );
-  }
-
   Widget _buildFoldersSection(EventProvider eventProvider) {
     final folders = widget.event.folders;
     final currentFolderId = eventProvider.currentFolderId;
@@ -2153,42 +2190,125 @@ class _MainContentViewState extends State<_MainContentView> {
   }
 
   Widget _buildPhotosHeader() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            'Photos',
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Photos',
+                style: TextStyle(
+                  color: Colors.grey.shade900,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              GestureDetector(
+                onTap: widget.onPickImages,
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.add_photo_alternate_rounded,
+                      color: Color(0xFFE8985A),
+                      size: 18,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Add Photos',
+                      style: TextStyle(
+                        color: const Color(0xFFE8985A),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFaceClustersSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
+          child: Text(
+            'People',
             style: TextStyle(
               color: Colors.grey.shade900,
               fontSize: 20,
               fontWeight: FontWeight.w700,
             ),
           ),
-          GestureDetector(
-            onTap: widget.onPickImages,
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.add_photo_alternate_rounded,
-                  color: Color(0xFFE8985A),
-                  size: 18,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  'Add Photos',
-                  style: TextStyle(
-                    color: const Color(0xFFE8985A),
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+        ),
+        SizedBox(
+          height: 120, // Enough height for folders
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            itemCount: _clusterService.clusters.length,
+            itemBuilder: (ctx, i) {
+              final clusterId = _clusterService.clusters.keys.elementAt(i);
+              final photos = _clusterService.clusters[clusterId]!;
+              final isSelected = _selectedPersonId == clusterId;
+              
+              return GestureDetector(
+                onTap: () => _filterByPerson(clusterId),
+                child: Container(
+                  width: 100, // Fixed width for the folder UI
+                  margin: const EdgeInsets.only(right: 12),
+                  child: Column(
+                    children: [
+                      // Folder/Wallpaper look
+                      Container(
+                        height: 90,
+                        width: 90,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: isSelected ? const Color(0xFFE8985A) : Colors.transparent,
+                            width: 3,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.08),
+                              blurRadius: 8,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                          image: DecorationImage(
+                            image: NetworkImage(photos.first),
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Person ${clusterId + 1}',
+                        style: TextStyle(
+                          color: isSelected ? const Color(0xFFE8985A) : const Color(0xFF475569),
+                          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
                   ),
                 ),
-              ],
-            ),
+              );
+            },
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
