@@ -1222,6 +1222,7 @@ class _MainContentViewState extends State<_MainContentView> {
   final _clusterService = FaceClusterService();
   int? _selectedPersonId;
   bool _isClustering = false;
+  int _clusteringToken = 0;
 
   Set<String> _processedPhotoUrls = {};
   bool _isClusterServiceInitialized = false;
@@ -1232,6 +1233,7 @@ class _MainContentViewState extends State<_MainContentView> {
     _currentEventId = widget.event.id;
     _loadMembers();
     _clusterService.init().then((_) {
+      if (!mounted) return;
       _isClusterServiceInitialized = true;
       _processAllPhotos(context.read<EventProvider>().currentPhotos);
     });
@@ -1246,15 +1248,18 @@ class _MainContentViewState extends State<_MainContentView> {
     if (!_isClusterServiceInitialized) return;
     if (_isClustering) return;
     _isClustering = true;
+    final token = _clusteringToken;
     bool clusterUpdated = false;
-    
+
     for (final photo in photos) {
+      if (token != _clusteringToken) break;
       if (photo.displayUrl == null && photo.thumbnailUrl == null) continue;
-      final url = photo.thumbnailUrl ?? photo.displayUrl!;
+      final url = photo.displayUrl ?? photo.thumbnailUrl!;
       if (_processedPhotoUrls.contains(url)) continue;
-      
+
       try {
         final bytes = await _downloadPhoto(url);
+        if (token != _clusteringToken) break;
         await _clusterService.processPhoto(url, bytes);
         _processedPhotoUrls.add(url);
         clusterUpdated = true;
@@ -1262,7 +1267,13 @@ class _MainContentViewState extends State<_MainContentView> {
         debugPrint('Error processing photo ${photo.id}: $e');
       }
     }
-    
+
+    if (token != _clusteringToken) {
+      _clusterService.reset();
+      _isClustering = false;
+      return;
+    }
+
     _isClustering = false;
     if (clusterUpdated && mounted) setState(() {});
   }
@@ -1279,9 +1290,13 @@ class _MainContentViewState extends State<_MainContentView> {
     // If event changed, clear old data and reload
     if (oldWidget.event.id != widget.event.id) {
       _currentEventId = widget.event.id;
+      _clusteringToken++;
+      _clusterService.reset();
+      _processedPhotoUrls.clear();
       setState(() {
         _members = []; // Clear old members immediately
         _isLoadingMembers = true;
+        _selectedPersonId = null;
       });
       _loadMembers();
     }
@@ -1289,6 +1304,7 @@ class _MainContentViewState extends State<_MainContentView> {
 
   @override
   void dispose() {
+    _clusterService.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -1389,10 +1405,11 @@ class _MainContentViewState extends State<_MainContentView> {
         }
 
         // Filter by face cluster if selected
-        if (_selectedPersonId != null && _clusterService.clusters.containsKey(_selectedPersonId)) {
+        if (_selectedPersonId != null &&
+            _clusterService.clusters.containsKey(_selectedPersonId)) {
           final clusterPhotoUrls = _clusterService.clusters[_selectedPersonId]!;
           photos = photos.where((photo) {
-            final url = photo.thumbnailUrl ?? photo.displayUrl;
+            final url = photo.displayUrl ?? photo.thumbnailUrl;
             return url != null && clusterPhotoUrls.contains(url);
           }).toList();
         }
@@ -2259,7 +2276,7 @@ class _MainContentViewState extends State<_MainContentView> {
               final clusterId = _clusterService.clusters.keys.elementAt(i);
               final photos = _clusterService.clusters[clusterId]!;
               final isSelected = _selectedPersonId == clusterId;
-              
+
               return GestureDetector(
                 onTap: () => _filterByPerson(clusterId),
                 child: Container(
@@ -2274,7 +2291,9 @@ class _MainContentViewState extends State<_MainContentView> {
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(16),
                           border: Border.all(
-                            color: isSelected ? const Color(0xFFE8985A) : Colors.transparent,
+                            color: isSelected
+                                ? const Color(0xFFE8985A)
+                                : Colors.transparent,
                             width: 3,
                           ),
                           boxShadow: [
@@ -2294,8 +2313,12 @@ class _MainContentViewState extends State<_MainContentView> {
                       Text(
                         'Person ${clusterId + 1}',
                         style: TextStyle(
-                          color: isSelected ? const Color(0xFFE8985A) : const Color(0xFF475569),
-                          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+                          color: isSelected
+                              ? const Color(0xFFE8985A)
+                              : const Color(0xFF475569),
+                          fontWeight: isSelected
+                              ? FontWeight.w700
+                              : FontWeight.w600,
                           fontSize: 13,
                         ),
                         maxLines: 1,
